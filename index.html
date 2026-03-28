@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Tech Tree</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: #0f172a; 
+            color: #f8fafc; 
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #cy-container { flex-grow: 1; height: 100%; position: relative; }
+        #cy { width: 100%; height: 100%; }
+
+        #info-panel {
+            width: 400px;
+            background-color: #1e293b;
+            border-left: 1px solid #334155;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            box-shadow: -4px 0 15px rgba(0,0,0,0.5);
+            z-index: 10;
+            overflow-y: auto; 
+        }
+
+        h1 { font-size: 1.5rem; color: #38bdf8; }
+        #skill-name { font-size: 2.2rem; font-weight: bold; color: #f8fafc; }
+        .badge { 
+            display: inline-block; padding: 0.4rem 0.8rem; 
+            background: #334155; border-radius: 6px; 
+            font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px;
+        }
+        .instruction { color: #94a3b8; font-size: 0.95rem; line-height: 1.6; }
+
+        #learn-btn {
+            background-color: #10b981;
+            color: white;
+            border: none;
+            padding: 1rem;
+            font-size: 1.1rem;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: none; 
+            box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.4);
+        }
+        #learn-btn:hover { background-color: #059669; transform: translateY(-2px); }
+        #learn-btn.learned { background-color: #f59e0b; box-shadow: 0 4px 6px -1px rgba(245, 158, 11, 0.4); }
+        #learn-btn.learned:hover { background-color: #d97706; }
+
+        .admin-form-container {
+            background: #0f172a; 
+            padding: 1.5rem; 
+            border-radius: 8px; 
+            margin-top: 1rem;
+            border: 1px solid #334155;
+        }
+        .admin-form-container input, .admin-form-container select {
+            width: 100%;
+            padding: 0.6rem;
+            margin-bottom: 0.8rem;
+            background: #1e293b;
+            border: 1px solid #334155;
+            color: white;
+            border-radius: 4px;
+        }
+        .admin-form-container button {
+            width: 100%;
+            padding: 0.8rem;
+            background: #38bdf8;
+            color: #0f172a;
+            border: none;
+            font-weight: bold;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .admin-form-container button:hover { background: #0284c7; }
+
+        .progress-container {
+            width: 100%;
+            background-color: #334155;
+            border-radius: 999px;
+            height: 12px;
+            margin-top: 1rem; 
+        }
+        #progress-bar {
+            height: 100%;
+            background-color: #f59e0b;
+            border-radius: 999px;
+            width: 0%;
+            transition: width 0.4s ease;
+        }
+        #progress-text { text-align: right; font-size: 0.8rem; color: #94a3b8; margin-top: 0.5rem; }
+
+    </style>
+</head>
+<body>
+
+    <div id="cy-container">
+        <div id="cy"></div>
+    </div>
+
+    <div id="info-panel">
+        <div>
+            <h1>Mastery Tracker</h1>
+            <p class="instruction">Drag nodes around to test the physics. Click to inspect.</p>
+        </div>
+        
+        <div style="margin-top: 1rem;">
+            <div id="skill-name">Select a Skill</div>
+            <br>
+            <span id="skill-group" class="badge">Category: None</span>
+        </div>
+        
+        <p id="skill-desc" class="instruction">
+            Click on any node in the graph to view its dependencies and track your learning progress.
+        </p>
+
+        <button id="learn-btn">Mark as Learned</button>
+
+        <div class="admin-form-container">
+            <h3 style="font-size: 1rem; color: #38bdf8; margin-bottom: 1rem;">+ Add New Skill</h3>
+            <form id="add-skill-form">
+                <input type="text" id="new-id" placeholder="ID (e.g., 'ts')" required>
+                <input type="text" id="new-name" placeholder="Name (e.g., 'TypeScript')" required>
+                <input type="text" id="new-group" placeholder="Category (e.g., 'language')" required>
+                
+                <label style="font-size: 0.8rem; color: #94a3b8; display: block; margin-bottom: 0.3rem;">Prerequisite (Optional):</label>
+                <select id="new-requires">
+                    <option value="none">-- None --</option>
+                    </select>
+
+                <button type="submit">Add to Graph</button>
+            </form>
+        </div>
+
+        <div style="margin-top: auto;">
+            <div class="progress-container">
+                <div id="progress-bar"></div>
+            </div>
+            <div id="progress-text">0 / 0 Skills Mastered</div>
+        </div>
+    </div>
+
+    <script>
+        let masteredSkills = JSON.parse(localStorage.getItem('masteredSkills')) || [];
+        let totalSkills = 0;
+        let selectedNodeId = null;
+
+        fetch('/api/skills')
+            .then(res => res.json())
+            .then(data => {
+                
+                totalSkills = data.filter(item => !item.data.source).length;
+                updateProgressBar();
+
+                const cy = cytoscape({
+                    container: document.getElementById('cy'),
+                    elements: data,
+                    style: [
+                        {
+                            selector: 'node',
+                            style: {
+                                'background-color': '#38bdf8',
+                                'label': 'data(name)',
+                                'color': '#fff',
+                                'text-valign': 'center',
+                                'font-size': '12px',
+                                'font-weight': 'bold',
+                                'width': '75px',
+                                'height': '75px',
+                                'text-outline-color': '#38bdf8',
+                                'text-outline-width': 2,
+                                'transition-property': 'background-color, width, height, text-outline-color',
+                                'transition-duration': '0.3s'
+                            }
+                        },
+                        {
+                            selector: 'edge',
+                            style: {
+                                'width': 3,
+                                'line-color': '#475569',
+                                'target-arrow-color': '#475569',
+                                'target-arrow-shape': 'triangle',
+                                'curve-style': 'bezier'
+                            }
+                        },
+                        {
+                            selector: '.mastered',
+                            style: {
+                                'background-color': '#f59e0b',
+                                'text-outline-color': '#f59e0b',
+                                'border-width': 4,
+                                'border-color': '#fff',
+                                'border-opacity': 0.8
+                            }
+                        },
+                        {
+                            selector: '.highlighted-edge',
+                            style: {
+                                'line-color': '#10b981',
+                                'target-arrow-color': '#10b981',
+                                'width': 5,
+                                'z-index': 10
+                            }
+                        },
+                        {
+                            selector: '.dimmed',
+                            style: { 'opacity': 0.2 }
+                        }
+                    ],
+                    layout: {
+                        name: 'cose',
+                        animate: true,
+                        randomize: true,
+                        nodeRepulsion: 400000,
+                        edgeElasticity: 100,
+                        gravity: 80,
+                        padding: 50
+                    }
+                });
+
+                cy.nodes().forEach(node => {
+                    if (masteredSkills.includes(node.id())) {
+                        node.addClass('mastered');
+                    }
+                });
+
+                const selectMenu = document.getElementById('new-requires');
+                cy.nodes().forEach(node => {
+                    let option = document.createElement('option');
+                    option.value = node.id();
+                    option.text = node.data('name');
+                    selectMenu.appendChild(option);
+                });
+
+                const learnBtn = document.getElementById('learn-btn');
+
+                cy.on('tap', 'node', function(evt){
+                    let node = evt.target;
+                    selectedNodeId = node.id();
+                    
+                    document.getElementById('skill-name').innerText = node.data('name');
+                    document.getElementById('skill-group').innerText = 'Category: ' + node.data('group');
+                    
+                    let isMastered = masteredSkills.includes(selectedNodeId);
+                    
+                    learnBtn.style.display = 'block';
+                    if(isMastered) {
+                        learnBtn.innerText = 'Unmark as Learned';
+                        learnBtn.classList.add('learned');
+                        document.getElementById('skill-desc').innerText = `Awesome! You have mastered ${node.data('name')}.`;
+                    } else {
+                        learnBtn.innerText = 'Mark as Learned';
+                        learnBtn.classList.remove('learned');
+                        document.getElementById('skill-desc').innerText = `Ready to master ${node.data('name')}? Complete its prerequisites first!`;
+                    }
+
+                    cy.elements().removeClass('highlighted-edge dimmed');
+                    let prerequisites = node.predecessors();
+                    prerequisites.edges().addClass('highlighted-edge');
+                    
+                    let everythingElse = cy.elements().difference(prerequisites.union(node));
+                    everythingElse.addClass('dimmed');
+                });
+
+                cy.on('tap', function(evt){
+                    if(evt.target === cy){
+                        cy.elements().removeClass('highlighted-edge dimmed');
+                        document.getElementById('skill-name').innerText = 'Select a Skill';
+                        document.getElementById('skill-group').innerText = 'Category: None';
+                        document.getElementById('skill-desc').innerText = 'Click on any node in the graph to view its dependencies.';
+                        learnBtn.style.display = 'none';
+                        selectedNodeId = null;
+                    }
+                });
+
+                learnBtn.addEventListener('click', () => {
+                    if(!selectedNodeId) return;
+                    let node = cy.getElementById(selectedNodeId);
+
+                    if(masteredSkills.includes(selectedNodeId)) {
+                        masteredSkills = masteredSkills.filter(id => id !== selectedNodeId);
+                        node.removeClass('mastered');
+                        learnBtn.innerText = 'Mark as Learned';
+                        learnBtn.classList.remove('learned');
+                    } else {
+                        masteredSkills.push(selectedNodeId);
+                        node.addClass('mastered');
+                        learnBtn.innerText = 'Unmark as Learned';
+                        learnBtn.classList.add('learned');
+                    }
+
+                    localStorage.setItem('masteredSkills', JSON.stringify(masteredSkills));
+                    updateProgressBar();
+                });
+
+                document.getElementById('add-skill-form').addEventListener('submit', async (e) => {
+                    e.preventDefault(); 
+
+                    const newSkill = {
+                        id: document.getElementById('new-id').value,
+                        name: document.getElementById('new-name').value,
+                        group: document.getElementById('new-group').value,
+                        requiresId: document.getElementById('new-requires').value
+                    };
+
+                    const response = await fetch('http://localhost:3000/api/skills', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(newSkill)
+                    });
+
+                    if (response.ok) {
+                        cy.add({ group: 'nodes', data: { id: newSkill.id, name: newSkill.name, group: newSkill.group } });
+
+                        if (newSkill.requiresId !== 'none') {
+                            cy.add({ group: 'edges', data: { id: `${newSkill.id}-${newSkill.requiresId}`, source: newSkill.id, target: newSkill.requiresId } });
+                        }
+
+                        cy.layout({ name: 'cose', animate: true, randomize: false, nodeRepulsion: 400000, edgeElasticity: 100, gravity: 80, padding: 50 }).run();
+                        
+                        totalSkills += 1;
+                        updateProgressBar();
+
+                        let option = document.createElement('option');
+                        option.value = newSkill.id;
+                        option.text = newSkill.name;
+                        selectMenu.appendChild(option);
+                        
+                        e.target.reset();
+                        alert('Success! Skill added to database and graph.');
+                    } else {
+                        alert("Failed to add skill. Make sure your Node.js server is running and updated!");
+                    }
+                });
+            });
+
+        function updateProgressBar() {
+            if (totalSkills === 0) return;
+            let percentage = (masteredSkills.length / totalSkills) * 100;
+            document.getElementById('progress-bar').style.width = percentage + '%';
+            document.getElementById('progress-text').innerText = `${masteredSkills.length} / ${totalSkills} Skills Mastered`;
+        }
+    </script>
+</body>
+</html>
