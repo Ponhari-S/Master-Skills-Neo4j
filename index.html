@@ -128,6 +128,7 @@
         </p>
 
         <button id="learn-btn">Mark as Learned</button>
+        <button id="delete-btn" style="background-color: #ef4444; color: white; border: none; padding: 0.8rem; font-size: 1rem; font-weight: bold; border-radius: 8px; cursor: pointer; display: none; margin-top: 0.5rem; width: 100%;">Delete Skill</button>
 
         <div class="admin-form-container">
             <h3 style="font-size: 1rem; color: #38bdf8; margin-bottom: 1rem;">+ Add New Skill</h3>
@@ -139,7 +140,7 @@
                 <label style="font-size: 0.8rem; color: #94a3b8; display: block; margin-bottom: 0.3rem;">Prerequisite (Optional):</label>
                 <select id="new-requires">
                     <option value="none">-- None --</option>
-                    </select>
+                </select>
 
                 <button type="submit">Add to Graph</button>
             </form>
@@ -273,6 +274,8 @@
                     
                     let everythingElse = cy.elements().difference(prerequisites.union(node));
                     everythingElse.addClass('dimmed');
+
+                    document.getElementById('delete-btn').style.display = 'block';
                 });
 
                 cy.on('tap', function(evt){
@@ -283,6 +286,7 @@
                         document.getElementById('skill-desc').innerText = 'Click on any node in the graph to view its dependencies.';
                         learnBtn.style.display = 'none';
                         selectedNodeId = null;
+                        document.getElementById('delete-btn').style.display = 'none';
                     }
                 });
 
@@ -304,6 +308,48 @@
 
                     localStorage.setItem('masteredSkills', JSON.stringify(masteredSkills));
                     updateProgressBar();
+                });
+
+                document.getElementById('delete-btn').addEventListener('click', async () => {
+                    if (!selectedNodeId) return;
+
+                    const confirmDelete = confirm("Are you sure you want to delete this skill? This cannot be undone.");
+                    if (!confirmDelete) return;
+
+                    const response = await fetch(`/api/skills/${selectedNodeId}`, {
+                        method: 'DELETE'
+                    });
+
+                    if (response.ok) {
+                        cy.getElementById(selectedNodeId).remove();
+
+                        if (masteredSkills.includes(selectedNodeId)) {
+                            masteredSkills = masteredSkills.filter(id => id !== selectedNodeId);
+                            localStorage.setItem('masteredSkills', JSON.stringify(masteredSkills));
+                        }
+
+                        totalSkills -= 1;
+                        updateProgressBar();
+
+                        const selectMenu = document.getElementById('new-requires');
+                        for (let i = 0; i < selectMenu.options.length; i++) {
+                            if (selectMenu.options[i].value === selectedNodeId) {
+                                selectMenu.remove(i);
+                                break;
+                            }
+                        }
+
+                        cy.elements().removeClass('highlighted-edge dimmed');
+                        document.getElementById('skill-name').innerText = 'Select a Skill';
+                        document.getElementById('skill-group').innerText = 'Category: None';
+                        document.getElementById('skill-desc').innerText = 'Click on any node in the graph to view its dependencies.';
+                        document.getElementById('learn-btn').style.display = 'none';
+                        document.getElementById('delete-btn').style.display = 'none';
+                        selectedNodeId = null;
+
+                    } else {
+                        alert("Failed to delete skill from database.");
+                    }
                 });
 
                 document.getElementById('add-skill-form').addEventListener('submit', async (e) => {

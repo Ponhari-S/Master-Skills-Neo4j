@@ -82,4 +82,19 @@ app.post('/api/skills', async (req, res) => {
     }
 });
 
+app.delete('/api/skills/:id', async (req, res) => {
+    const skillId = req.params.id;
+    const session = driver.session();
+
+    try {
+        await session.run(`MATCH (n:Skill {id: $id}) DETACH DELETE n`, { id: skillId });
+        res.status(200).json({ message: 'Skill successfully deleted' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Failed to delete skill' });
+    } finally {
+        await session.close();
+    }
+});
+
 app.listen(3000, () => console.log('Server running on http://localhost:3000'));
